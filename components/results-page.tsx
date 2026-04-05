@@ -1,6 +1,8 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { motion, useSpring, useTransform } from "framer-motion"
+import { CheckCircle2, Circle, ArrowRight } from "lucide-react"
 import { MigrationPlan, SourceType } from "@/app/page"
 
 interface ResultsPageProps {
@@ -15,584 +17,347 @@ const SOURCE_LABELS: Record<SourceType, string> = {
   "gcp": "Google Cloud",
 }
 
-const RISK_COLORS = {
-  High: { bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.2)", text: "#dc2626", dot: "#ef4444" },
-  Medium: { bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.2)", text: "#b45309", dot: "#f59e0b" },
-  Low: { bg: "rgba(34,197,94,0.08)", border: "rgba(34,197,94,0.2)", text: "#15803d", dot: "#22c55e" },
+const height = 50
+
+function Digit({ place, value }: { place: number; value: number }) {
+  const valueRoundedToPlace = Math.floor(value / place)
+  const animatedValue = useSpring(valueRoundedToPlace)
+  useEffect(() => { animatedValue.set(valueRoundedToPlace) }, [animatedValue, valueRoundedToPlace])
+  return (
+    <div style={{ height }} className="relative w-[1ch] tabular-nums overflow-hidden">
+      {[...Array(10)].map((_, i) => {
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        const y = useTransform(animatedValue, (latest) => {
+          const placeValue = latest % 10
+          const offset = (10 + i - placeValue) % 10
+          let memo = offset * height
+          if (offset > 5) memo -= 10 * height
+          return memo
+        })
+        return (
+          <motion.span key={i} style={{ y }} className="absolute inset-0 flex items-center justify-center">
+            {i}
+          </motion.span>
+        )
+      })}
+    </div>
+  )
 }
 
-const COMPLEXITY_CONFIG = {
-  Low: { color: "#22c55e", bg: "rgba(34,197,94,0.1)", width: "33%" },
-  Medium: { color: "#f59e0b", bg: "rgba(245,158,11,0.1)", width: "66%" },
-  High: { color: "#ef4444", bg: "rgba(239,68,68,0.1)", width: "100%" },
-}
-
-function AnimatedNumber({ target, prefix = "", suffix = "" }: { target: number; prefix?: string; suffix?: string }) {
+function Counter({ end, duration = 1.5 }: { end: number; duration?: number }) {
   const [value, setValue] = useState(0)
-
   useEffect(() => {
-    const duration = 1200
-    const start = Date.now()
-    const timer = setInterval(() => {
-      const elapsed = Date.now() - start
-      const progress = Math.min(elapsed / duration, 1)
-      const eased = 1 - Math.pow(1 - progress, 3)
-      setValue(Math.round(eased * target))
-      if (progress >= 1) clearInterval(timer)
-    }, 16)
-    return () => clearInterval(timer)
-  }, [target])
+    if (end === 0) return
+    const stepDuration = (duration * 1000) / end
+    const interval = setInterval(() => {
+      setValue(prev => {
+        if (prev < end) return prev + 1
+        clearInterval(interval)
+        return prev
+      })
+    }, stepDuration)
+    return () => clearInterval(interval)
+  }, [end, duration])
 
-  return <>{prefix}{value}{suffix}</>
+  return (
+    <div className="flex overflow-hidden leading-none text-4xl font-bold justify-center text-white">
+      {value >= 10 && <Digit place={10} value={value} />}
+      <Digit place={1} value={value} />
+    </div>
+  )
 }
 
 export default function ResultsPage({ plan, source, onReset }: ResultsPageProps) {
-  const [mounted, setMounted] = useState(false)
-  const [checkedItems, setCheckedItems] = useState<Set<number>>(new Set())
-
-  useEffect(() => {
-    setTimeout(() => setMounted(true), 100)
-  }, [])
-
-  const toggleCheck = (i: number) => {
-    const s = new Set(checkedItems)
-    s.has(i) ? s.delete(i) : s.add(i)
-    setCheckedItems(s)
-  }
+  const [expandedPhase, setExpandedPhase] = useState<number | null>(1)
+  const [checkedItems, setCheckedItems] = useState<boolean[]>(
+    new Array(plan.checklist?.length || 0).fill(false)
+  )
 
   const complexity = plan.complexity || "Medium"
-  const complexityConfig = COMPLEXITY_CONFIG[complexity] || COMPLEXITY_CONFIG.Medium
-
   const phaseCount = plan.migration_phases?.length || 0
   const serviceCount = plan.service_mapping?.length || 0
   const riskCount = plan.risks?.length || 0
+  const completedCount = checkedItems.filter(Boolean).length
+  const progressPercent = checkedItems.length > 0 ? (completedCount / checkedItems.length) * 100 : 0
+
+  const rawCost = plan.monthly_cost_estimate?.replace(/[^0-9]/g, "") || "0"
+  const currentCost = parseInt(rawCost) || 8000
+  const awsPercent = 65
+
+  const complexityColor: Record<string, string> = {
+    Low: "text-green-400", Medium: "text-yellow-400", High: "text-red-400",
+  }
+  const strategyColors: Record<string, string> = {
+    Rehost: "bg-blue-500/20 text-blue-300 border-blue-500/50",
+    Replatform: "bg-purple-500/20 text-purple-300 border-purple-500/50",
+    Refactor: "bg-orange-500/20 text-orange-300 border-orange-500/50",
+  }
+  const severityColors: Record<string, string> = {
+    High: "border-l-red-500 bg-red-500/10",
+    Medium: "border-l-yellow-500 bg-yellow-500/10",
+    Low: "border-l-green-500 bg-green-500/10",
+  }
+
+  const toggleCheck = (i: number) => {
+    const n = [...checkedItems]
+    n[i] = !n[i]
+    setCheckedItems(n)
+  }
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "linear-gradient(160deg, #faf8f4 0%, #f4f0e8 100%)",
-      padding: "40px 24px 80px",
-    }}>
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+    <div className="min-h-screen bg-[#080c18] text-white relative overflow-hidden">
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-blue-500/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-indigo-500/5 rounded-full blur-[100px] pointer-events-none" />
+
+      <div className="relative max-w-[900px] mx-auto px-6 py-10 space-y-5">
 
         {/* Top bar */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 40 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "monospace", fontSize: 12, color: "#a8a59f" }}>
-            <span>① Source</span><span>→</span>
-            <span>② Details</span><span>→</span>
-            <span style={{ color: "#0d7a4e", fontWeight: 700 }}>③ Migration Plan ✓</span>
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-2 text-xs font-mono text-gray-500">
+            <span>① Source</span><span>→</span><span>② Details</span><span>→</span>
+            <span className="text-green-400 font-semibold">③ Migration Plan ✓</span>
           </div>
-          <button
-            onClick={onReset}
-            style={{
-              background: "rgba(255,255,255,0.8)",
-              border: "1px solid rgba(0,0,0,0.1)",
-              borderRadius: 12, padding: "8px 16px",
-              fontSize: 13, color: "#6b6456", cursor: "pointer",
-              fontFamily: "monospace",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-            }}
-          >
+          <button onClick={onReset} className="text-xs font-mono text-gray-400 hover:text-white px-4 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all">
             ← New Plan
           </button>
         </div>
 
-        {/* Hero summary card */}
-        <div style={{
-          background: "#0f0e0c",
-          borderRadius: 24, padding: "36px 40px",
-          marginBottom: 20,
-          opacity: mounted ? 1 : 0,
-          transform: mounted ? "translateY(0)" : "translateY(16px)",
-          transition: "all 0.5s ease",
-          position: "relative", overflow: "hidden",
-        }}>
-          {/* Background decoration */}
-          <div style={{
-            position: "absolute", top: -60, right: -60,
-            width: 200, height: 200, borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(26,86,219,0.15), transparent)",
-            pointerEvents: "none",
-          }} />
-          <div style={{
-            position: "absolute", bottom: -40, left: -40,
-            width: 150, height: 150, borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(13,122,78,0.12), transparent)",
-            pointerEvents: "none",
-          }} />
-
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 24, flexWrap: "wrap" }}>
-            <div style={{ flex: 1, minWidth: 300 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-                <span style={{
-                  fontSize: 11, fontFamily: "monospace", color: "rgba(255,255,255,0.4)",
-                  textTransform: "uppercase", letterSpacing: 2,
-                }}>
-                  {SOURCE_LABELS[source]} → AWS
-                </span>
-              </div>
-              <h2 style={{
-                fontSize: 20, fontWeight: 700, color: "#fff",
-                lineHeight: 1.5, margin: "0 0 20px",
-                fontFamily: "inherit",
-              }}>
-                {plan.summary}
-              </h2>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <span style={{
-                  background: complexityConfig.bg, color: complexityConfig.color,
-                  border: `1px solid ${complexityConfig.color}40`,
-                  borderRadius: 20, padding: "4px 12px",
-                  fontSize: 12, fontFamily: "monospace",
-                }}>
-                  {complexity} Complexity
-                </span>
-                <span style={{
-                  background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.7)",
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  borderRadius: 20, padding: "4px 12px",
-                  fontSize: 12, fontFamily: "monospace",
-                }}>
-                  ⏱ {plan.estimated_duration}
-                </span>
-                <span style={{
-                  background: "rgba(34,197,94,0.1)", color: "#22c55e",
-                  border: "1px solid rgba(34,197,94,0.2)",
-                  borderRadius: 20, padding: "4px 12px",
-                  fontSize: 12, fontFamily: "monospace",
-                }}>
-                  💰 {plan.cost_savings}
-                </span>
-              </div>
-            </div>
-
-            {/* Quick stats */}
-            <div style={{ display: "flex", gap: 20 }}>
-              {[
-                { value: phaseCount, label: "Phases" },
-                { value: serviceCount, label: "Mappings" },
-                { value: riskCount, label: "Risks" },
-              ].map((s, i) => (
-                <div key={i} style={{ textAlign: "center" }}>
-                  <div style={{
-                    fontSize: 36, fontWeight: 800, color: "#fff",
-                    fontFamily: "monospace", lineHeight: 1,
-                  }}>
-                    {mounted ? <AnimatedNumber target={s.value} /> : 0}
-                  </div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 4, fontFamily: "monospace" }}>
-                    {s.label}
-                  </div>
-                </div>
-              ))}
-            </div>
+        {/* Hero */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+          className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-8">
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-sm text-gray-400 font-mono">{SOURCE_LABELS[source]}</span>
+            <ArrowRight className="w-4 h-4 text-gray-500" />
+            <span className="px-3 py-1 bg-orange-500/20 text-orange-300 rounded-full text-xs font-mono border border-orange-500/40">AWS</span>
           </div>
-        </div>
-
-        {/* Metrics row */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 20 }}>
-
-          {/* Complexity gauge */}
-          <div style={{
-            background: "#fff", borderRadius: 16, padding: "22px",
-            border: "1px solid rgba(0,0,0,0.07)",
-            boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-            opacity: mounted ? 1 : 0,
-            transform: mounted ? "translateY(0)" : "translateY(12px)",
-            transition: "all 0.5s 0.1s ease",
-          }}>
-            <div style={{ fontSize: 11, color: "#a8a59f", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>
-              Complexity
-            </div>
-            <div style={{ fontSize: 28, fontWeight: 800, color: complexityConfig.color, letterSpacing: "-1px", marginBottom: 12 }}>
-              {complexity}
-            </div>
-            <div style={{ height: 6, background: "#f0ebe0", borderRadius: 3, overflow: "hidden" }}>
-              <div style={{
-                height: "100%", width: mounted ? complexityConfig.width : "0%",
-                background: complexityConfig.color,
-                borderRadius: 3,
-                transition: "width 1s 0.3s ease",
-              }} />
-            </div>
-          </div>
-
-          {/* Duration */}
-          <div style={{
-            background: "#fff", borderRadius: 16, padding: "22px",
-            border: "1px solid rgba(0,0,0,0.07)",
-            boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-            opacity: mounted ? 1 : 0,
-            transform: mounted ? "translateY(0)" : "translateY(12px)",
-            transition: "all 0.5s 0.15s ease",
-          }}>
-            <div style={{ fontSize: 11, color: "#a8a59f", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>
-              Timeline
-            </div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: "#0f0e0c", letterSpacing: "-0.5px", marginBottom: 4 }}>
-              {plan.estimated_duration}
-            </div>
-            <div style={{ fontSize: 12, color: "#6b6456" }}>end-to-end migration</div>
-          </div>
-
-          {/* AWS Cost */}
-          <div style={{
-            background: "rgba(13,122,78,0.04)", borderRadius: 16, padding: "22px",
-            border: "1px solid rgba(13,122,78,0.15)",
-            boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-            opacity: mounted ? 1 : 0,
-            transform: mounted ? "translateY(0)" : "translateY(12px)",
-            transition: "all 0.5s 0.2s ease",
-          }}>
-            <div style={{ fontSize: 11, color: "#a8a59f", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: 1, marginBottom: 12 }}>
-              AWS Monthly Est.
-            </div>
-            <div style={{ fontSize: 24, fontWeight: 800, color: "#0d7a4e", letterSpacing: "-0.5px", marginBottom: 4 }}>
-              {plan.monthly_cost_estimate}
-            </div>
-            <div style={{ fontSize: 12, color: "#0d7a4e" }}>↘ {plan.cost_savings}</div>
-          </div>
-        </div>
-
-        {/* Service Mapping */}
-        <div style={{
-          background: "#fff", borderRadius: 20, overflow: "hidden",
-          border: "1px solid rgba(0,0,0,0.07)",
-          boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-          marginBottom: 20,
-          opacity: mounted ? 1 : 0,
-          transform: mounted ? "translateY(0)" : "translateY(12px)",
-          transition: "all 0.5s 0.25s ease",
-        }}>
-          <div style={{
-            padding: "18px 24px", borderBottom: "1px solid rgba(0,0,0,0.06)",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            background: "#faf8f4",
-          }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#0f0e0c", fontFamily: "inherit" }}>
-              🔄 Service Mapping
-            </div>
-            <span style={{
-              fontFamily: "monospace", fontSize: 11,
-              background: "rgba(26,86,219,0.08)", color: "#1a56db",
-              border: "1px solid rgba(26,86,219,0.15)",
-              borderRadius: 20, padding: "2px 10px",
-            }}>
-              {serviceCount} services
-            </span>
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: "#f9f8f6" }}>
-                  {["Current", "→", "AWS Equivalent", "Strategy", "Notes"].map((h, i) => (
-                    <th key={i} style={{
-                      padding: "10px 16px", textAlign: "left",
-                      fontSize: 11, color: "#a8a59f",
-                      fontFamily: "monospace", textTransform: "uppercase", letterSpacing: 1,
-                      fontWeight: 400, borderBottom: "1px solid rgba(0,0,0,0.06)",
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {plan.service_mapping?.map((m, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid rgba(0,0,0,0.04)" }}
-                    onMouseEnter={e => (e.currentTarget as HTMLTableRowElement).style.background = "#faf8f4"}
-                    onMouseLeave={e => (e.currentTarget as HTMLTableRowElement).style.background = "transparent"}
-                  >
-                    <td style={{ padding: "14px 16px", fontSize: 13, fontWeight: 600, color: "#0f0e0c" }}>{m.current}</td>
-                    <td style={{ padding: "14px 8px", color: "#a8a59f", fontSize: 16 }}>→</td>
-                    <td style={{ padding: "14px 16px", fontSize: 13, fontWeight: 600, color: "#1a56db" }}>{m.aws_equivalent}</td>
-                    <td style={{ padding: "14px 16px" }}>
-                      <span style={{
-                        fontSize: 11, fontFamily: "monospace",
-                        background: "#f0ebe0", color: "#6b6456",
-                        border: "1px solid rgba(0,0,0,0.1)",
-                        borderRadius: 6, padding: "2px 8px",
-                      }}>{m.strategy}</span>
-                    </td>
-                    <td style={{ padding: "14px 16px", fontSize: 12, color: "#6b6456", maxWidth: 200 }}>{m.notes}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Migration Strategy */}
-        <div style={{
-          background: "rgba(26,86,219,0.05)",
-          border: "1px solid rgba(26,86,219,0.15)",
-          borderRadius: 16, padding: "18px 22px", marginBottom: 20,
-          opacity: mounted ? 1 : 0,
-          transform: mounted ? "translateY(0)" : "translateY(12px)",
-          transition: "all 0.5s 0.3s ease",
-        }}>
-          <span style={{ fontSize: 12, fontFamily: "monospace", color: "#1a56db", fontWeight: 600 }}>
-            🎯 Primary Strategy:
-          </span>
-          <span style={{ fontSize: 13, color: "#1a56db", marginLeft: 8 }}>{plan.migration_strategy}</span>
-        </div>
-
-        {/* Migration Phases */}
-        <div style={{
-          background: "#fff", borderRadius: 20, overflow: "hidden",
-          border: "1px solid rgba(0,0,0,0.07)",
-          boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-          marginBottom: 20,
-          opacity: mounted ? 1 : 0,
-          transform: mounted ? "translateY(0)" : "translateY(12px)",
-          transition: "all 0.5s 0.35s ease",
-        }}>
-          <div style={{
-            padding: "18px 24px", borderBottom: "1px solid rgba(0,0,0,0.06)",
-            background: "#faf8f4",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-          }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#0f0e0c" }}>📋 Migration Phases</div>
-            <span style={{
-              fontFamily: "monospace", fontSize: 11,
-              background: "rgba(26,86,219,0.08)", color: "#1a56db",
-              border: "1px solid rgba(26,86,219,0.15)",
-              borderRadius: 20, padding: "2px 10px",
-            }}>{phaseCount} phases</span>
-          </div>
-          <div style={{ padding: "8px 24px 24px" }}>
-            {plan.migration_phases?.map((phase, i) => (
-              <div key={i} style={{ display: "flex", gap: 16, paddingTop: 20 }}>
-                {/* Timeline */}
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                  <div style={{
-                    width: 36, height: 36, borderRadius: "50%",
-                    background: "#0f0e0c", color: "#fff",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 13, fontWeight: 700, flexShrink: 0,
-                    fontFamily: "monospace",
-                  }}>
-                    {phase.phase}
-                  </div>
-                  {i < phaseCount - 1 && (
-                    <div style={{ width: 1, flex: 1, background: "rgba(0,0,0,0.1)", marginTop: 6, minHeight: 20 }} />
-                  )}
-                </div>
-                {/* Content */}
-                <div style={{ flex: 1, paddingBottom: 8 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: "#0f0e0c" }}>{phase.title}</span>
-                    <span style={{
-                      fontSize: 11, fontFamily: "monospace",
-                      background: "#f0ebe0", color: "#6b6456",
-                      border: "1px solid rgba(0,0,0,0.08)",
-                      borderRadius: 6, padding: "2px 8px",
-                    }}>{phase.duration}</span>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {phase.tasks?.map((task, j) => (
-                      <div key={j} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                        <span style={{ color: "#1a56db", fontSize: 10, marginTop: 4, flexShrink: 0 }}>→</span>
-                        <span style={{ fontSize: 13, color: "#6b6456", lineHeight: 1.5 }}>{task}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+          <p className="text-base text-gray-300 mb-8 leading-relaxed">{plan.summary}</p>
+          <div className="grid grid-cols-3 gap-6 mb-8">
+            {[{ label: "Migration Phases", value: phaseCount }, { label: "Service Mappings", value: serviceCount }, { label: "Identified Risks", value: riskCount }].map((s, i) => (
+              <div key={i} className="text-center">
+                <div className="text-xs text-gray-500 font-mono mb-2">{s.label}</div>
+                <Counter end={s.value} />
               </div>
             ))}
           </div>
+          <div className="flex gap-3 flex-wrap">
+            <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/10 text-sm">
+              <span className="text-gray-400">Complexity: </span>
+              <span className={`font-semibold ${complexityColor[complexity]}`}>{complexity}</span>
+            </div>
+            <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/10 text-sm">
+              <span className="text-gray-400">Duration: </span>
+              <span className="font-semibold text-white">{plan.estimated_duration}</span>
+            </div>
+            <div className="px-4 py-2 bg-green-500/10 rounded-xl border border-green-500/30 text-sm">
+              <span className="text-green-400">Savings: </span>
+              <span className="font-semibold text-green-300">{plan.cost_savings}</span>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Metrics */}
+        <div className="grid grid-cols-3 gap-4">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+            className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+            <h3 className="text-xs font-mono text-gray-400 mb-3 uppercase tracking-wider">Complexity</h3>
+            <div className="flex items-center justify-center">
+              <svg width="120" height="75" viewBox="0 0 120 75">
+                <path d="M 10 70 A 50 50 0 0 1 110 70" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="8" strokeLinecap="round"/>
+                <motion.path d="M 10 70 A 50 50 0 0 1 110 70" fill="none"
+                  stroke={complexity === "Low" ? "#22c55e" : complexity === "Medium" ? "#eab308" : "#ef4444"}
+                  strokeWidth="8" strokeLinecap="round"
+                  initial={{ pathLength: 0 }}
+                  animate={{ pathLength: complexity === "Low" ? 0.33 : complexity === "Medium" ? 0.66 : 1 }}
+                  transition={{ duration: 1.5, ease: "easeOut" }}
+                />
+              </svg>
+            </div>
+            <div className={`text-center text-xl font-bold ${complexityColor[complexity]}`}>{complexity}</div>
+          </motion.div>
+
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+            className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+            <h3 className="text-xs font-mono text-gray-400 mb-3 uppercase tracking-wider">Timeline</h3>
+            <div className="text-2xl font-bold text-white mb-3">{plan.estimated_duration}</div>
+            <div className="relative h-2 bg-white/10 rounded-full overflow-hidden mb-2">
+              <motion.div className="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 to-purple-500"
+                initial={{ width: 0 }} animate={{ width: "100%" }} transition={{ duration: 2, ease: "easeOut" }} />
+            </div>
+            <div className="text-xs text-gray-500 font-mono">end-to-end migration</div>
+          </motion.div>
+
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
+            className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+            <h3 className="text-xs font-mono text-gray-400 mb-3 uppercase tracking-wider">AWS Monthly Est.</h3>
+            <div className="text-2xl font-bold text-green-400 mb-1">{plan.monthly_cost_estimate}</div>
+            <div className="text-xs text-green-400 mb-3">↘ {plan.cost_savings}</div>
+            <div className="relative h-2 bg-white/10 rounded-full overflow-hidden">
+              <motion.div className="absolute inset-y-0 left-0 bg-gradient-to-r from-green-500 to-emerald-400"
+                initial={{ width: 0 }} animate={{ width: `${awsPercent}%` }}
+                transition={{ duration: 1.5, ease: "easeOut", delay: 0.3 }} />
+            </div>
+          </motion.div>
         </div>
 
-        {/* Bottom grid: Risks + Cost */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-
-          {/* Risks */}
-          <div style={{
-            background: "#fff", borderRadius: 20, overflow: "hidden",
-            border: "1px solid rgba(0,0,0,0.07)",
-            boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-            opacity: mounted ? 1 : 0,
-            transform: mounted ? "translateY(0)" : "translateY(12px)",
-            transition: "all 0.5s 0.4s ease",
-          }}>
-            <div style={{ padding: "18px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)", background: "#faf8f4", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#0f0e0c" }}>⚠️ Risk Assessment</div>
-              <span style={{ fontFamily: "monospace", fontSize: 11, background: "rgba(245,158,11,0.08)", color: "#b45309", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 20, padding: "2px 10px" }}>
-                {riskCount} risks
-              </span>
-            </div>
-            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {plan.risks?.map((risk, i) => {
-                const r = typeof risk === "string"
-                  ? { description: risk, severity: "Medium" as const }
-                  : risk
-                const c = RISK_COLORS[r.severity] || RISK_COLORS.Medium
-                return (
-                  <div key={i} style={{
-                    background: c.bg, border: `1px solid ${c.border}`,
-                    borderRadius: 10, padding: "10px 12px",
-                    display: "flex", gap: 10, alignItems: "flex-start",
-                  }}>
-                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: c.dot, flexShrink: 0, marginTop: 5 }} />
-                    <div style={{ flex: 1 }}>
-                      <span style={{
-                        fontSize: 10, fontFamily: "monospace", fontWeight: 700,
-                        color: c.text, textTransform: "uppercase", letterSpacing: 0.5,
-                        marginBottom: 4, display: "block",
-                      }}>
-                        {r.severity}
-                      </span>
-                      <span style={{ fontSize: 12, color: "#0f0e0c", lineHeight: 1.5 }}>{r.description}</span>
-                    </div>
+        {/* Service Mapping */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}
+          className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-base font-bold">🔄 Service Mapping</h2>
+            <span className="text-xs font-mono px-3 py-1 bg-blue-500/10 text-blue-300 border border-blue-500/20 rounded-full">{serviceCount} services</span>
+          </div>
+          <div className="space-y-2">
+            {plan.service_mapping?.map((m, i) => (
+              <motion.div key={i} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.5 + i * 0.07 }}
+                className="bg-white/3 border border-white/8 rounded-xl p-4 hover:bg-white/8 transition-colors">
+                <div className="grid grid-cols-4 gap-4 items-start">
+                  <div className="text-sm font-semibold text-white">{m.current}</div>
+                  <div className="text-sm font-semibold text-orange-300">{m.aws_equivalent}</div>
+                  <div className="flex justify-center">
+                    <span className={`px-2 py-1 rounded-full text-xs font-mono border ${strategyColors[m.strategy] || strategyColors.Rehost}`}>{m.strategy}</span>
                   </div>
+                  <div className="text-xs text-gray-400 leading-relaxed">{m.notes}</div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
+
+        {/* Phases */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}
+          className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-base font-bold">📋 Migration Phases</h2>
+            <span className="text-xs font-mono px-3 py-1 bg-blue-500/10 text-blue-300 border border-blue-500/20 rounded-full">{phaseCount} phases</span>
+          </div>
+          <div className="relative flex justify-between items-start mb-5">
+            <div className="absolute top-6 left-0 right-0 h-px bg-white/10 z-0" />
+            {plan.migration_phases?.map((phase) => (
+              <div key={phase.phase} className="flex flex-col items-center flex-1 z-10">
+                <motion.button
+                  onClick={() => setExpandedPhase(expandedPhase === phase.phase ? null : phase.phase)}
+                  whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }}
+                  className={`w-11 h-11 rounded-full border-2 flex items-center justify-center font-bold text-sm transition-all ${
+                    expandedPhase === phase.phase ? "bg-blue-500 border-blue-500 shadow-lg shadow-blue-500/40 text-white" : "bg-[#080c18] border-white/20 hover:border-white/50 text-gray-300"
+                  }`}
+                >{phase.phase}</motion.button>
+                <div className="text-xs font-medium mt-2 text-center text-white px-1 leading-tight">{phase.title}</div>
+                <div className="text-xs text-gray-500 mt-1 font-mono">{phase.duration}</div>
+              </div>
+            ))}
+          </div>
+          {expandedPhase !== null && (() => {
+            const phase = plan.migration_phases?.find(p => p.phase === expandedPhase)
+            if (!phase) return null
+            return (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+                className="bg-white/5 rounded-xl p-5 border border-white/10">
+                <h3 className="font-semibold mb-3 text-sm text-white">
+                  Phase {phase.phase}: {phase.title}
+                  <span className="ml-2 text-xs font-mono text-gray-400">{phase.duration}</span>
+                </h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {phase.tasks?.map((task, idx) => (
+                    <div key={idx} className="flex items-center gap-2 text-xs text-gray-300">
+                      <div className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />{task}
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )
+          })()}
+        </motion.div>
+
+        {/* Risk + Cost */}
+        <div className="grid grid-cols-2 gap-4">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }}
+            className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold">⚠️ Risk Assessment</h2>
+              <span className="text-xs font-mono px-2 py-1 bg-yellow-500/10 text-yellow-300 border border-yellow-500/20 rounded-full">{riskCount} risks</span>
+            </div>
+            <div className="space-y-2">
+              {plan.risks?.map((risk, i) => {
+                const r = typeof risk === "string" ? { description: risk, severity: "Medium" as const } : risk
+                return (
+                  <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.7 + i * 0.07 }}
+                    className={`border-l-4 rounded-r-xl p-3 ${severityColors[r.severity] || severityColors.Medium}`}>
+                    <div className="text-xs font-mono font-bold text-gray-400 mb-1 uppercase">{r.severity}</div>
+                    <p className="text-xs text-gray-200 leading-relaxed">{r.description}</p>
+                  </motion.div>
                 )
               })}
             </div>
-          </div>
+          </motion.div>
 
-          {/* Cost savings visual */}
-          <div style={{
-            background: "#fff", borderRadius: 20,
-            border: "1px solid rgba(0,0,0,0.07)",
-            boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-            overflow: "hidden",
-            opacity: mounted ? 1 : 0,
-            transform: mounted ? "translateY(0)" : "translateY(12px)",
-            transition: "all 0.5s 0.45s ease",
-          }}>
-            <div style={{ padding: "18px 20px", borderBottom: "1px solid rgba(0,0,0,0.06)", background: "#faf8f4" }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "#0f0e0c" }}>💰 Cost Analysis</div>
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }}
+            className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+            <h2 className="text-base font-bold mb-4">💰 Cost Analysis</h2>
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-gray-400">Current infrastructure</span>
+                  <span className="font-mono">{plan.monthly_cost_estimate}</span>
+                </div>
+                <div className="relative h-6 bg-white/8 rounded-lg overflow-hidden">
+                  <motion.div className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-500/80 to-red-600/80 flex items-center justify-end pr-2"
+                    initial={{ width: 0 }} animate={{ width: "100%" }} transition={{ duration: 1.5, ease: "easeOut" }}>
+                    <span className="text-xs font-mono">100%</span>
+                  </motion.div>
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-gray-400">AWS (estimated)</span>
+                  <span className="font-mono text-green-400">{plan.monthly_cost_estimate}</span>
+                </div>
+                <div className="relative h-6 bg-white/8 rounded-lg overflow-hidden">
+                  <motion.div className="absolute inset-y-0 left-0 bg-gradient-to-r from-green-500/80 to-emerald-500/80 flex items-center justify-end pr-2"
+                    initial={{ width: 0 }} animate={{ width: `${awsPercent}%` }}
+                    transition={{ duration: 1.5, ease: "easeOut", delay: 0.3 }}>
+                    <span className="text-xs font-mono">{awsPercent}%</span>
+                  </motion.div>
+                </div>
+              </div>
+              <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 text-center">
+                <div className="text-xs font-mono text-green-400 mb-1 uppercase tracking-wider">Projected Savings</div>
+                <div className="text-2xl font-bold text-green-300">{plan.cost_savings}</div>
+              </div>
+              <p className="text-xs text-gray-600 font-mono text-center">*Based on typical AWS pricing</p>
             </div>
-            <div style={{ padding: "20px" }}>
-              {/* Cost bars */}
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                  <span style={{ fontSize: 12, color: "#6b6456" }}>Current infrastructure</span>
-                  <span style={{ fontSize: 12, fontFamily: "monospace", fontWeight: 600, color: "#0f0e0c" }}>—</span>
-                </div>
-                <div style={{ height: 10, background: "#f0ebe0", borderRadius: 5, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", width: mounted ? "100%" : "0%",
-                    background: "#d1d0ca", borderRadius: 5,
-                    transition: "width 1s 0.5s ease",
-                  }} />
-                </div>
-              </div>
-              <div style={{ marginBottom: 24 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                  <span style={{ fontSize: 12, color: "#6b6456" }}>AWS (estimated)</span>
-                  <span style={{ fontSize: 12, fontFamily: "monospace", fontWeight: 600, color: "#0d7a4e" }}>
-                    {plan.monthly_cost_estimate}
-                  </span>
-                </div>
-                <div style={{ height: 10, background: "#f0ebe0", borderRadius: 5, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", width: mounted ? "65%" : "0%",
-                    background: "linear-gradient(90deg, #0d7a4e, #22c55e)",
-                    borderRadius: 5,
-                    transition: "width 1.2s 0.6s ease",
-                  }} />
-                </div>
-              </div>
-
-              {/* Savings highlight */}
-              <div style={{
-                background: "rgba(13,122,78,0.06)",
-                border: "1px solid rgba(13,122,78,0.15)",
-                borderRadius: 12, padding: "14px 16px",
-                textAlign: "center",
-              }}>
-                <div style={{ fontSize: 11, color: "#0d7a4e", fontFamily: "monospace", marginBottom: 4 }}>
-                  PROJECTED SAVINGS
-                </div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: "#0d7a4e", letterSpacing: "-0.5px" }}>
-                  {plan.cost_savings}
-                </div>
-              </div>
-
-              <p style={{ fontSize: 11, color: "#a8a59f", marginTop: 12, fontFamily: "monospace", textAlign: "center" }}>
-                *Estimates based on typical AWS pricing
-              </p>
-            </div>
-          </div>
+          </motion.div>
         </div>
 
         {/* Checklist */}
-        <div style={{
-          background: "#fff", borderRadius: 20, overflow: "hidden",
-          border: "1px solid rgba(0,0,0,0.07)",
-          boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-          marginBottom: 20,
-          opacity: mounted ? 1 : 0,
-          transform: mounted ? "translateY(0)" : "translateY(12px)",
-          transition: "all 0.5s 0.5s ease",
-        }}>
-          <div style={{ padding: "18px 24px", borderBottom: "1px solid rgba(0,0,0,0.06)", background: "#faf8f4", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#0f0e0c" }}>✅ Pre-Migration Checklist</div>
-            <span style={{ fontSize: 12, fontFamily: "monospace", color: "#a8a59f" }}>
-              {checkedItems.size}/{plan.checklist?.length || 0} done
-            </span>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8 }}
+          className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-bold">✅ Pre-Migration Checklist</h2>
+            <span className="text-xs font-mono text-gray-400">{completedCount}/{checkedItems.length} done</span>
           </div>
-          <div style={{ padding: "16px 24px", display: "flex", flexDirection: "column", gap: 8 }}>
-            {plan.checklist?.map((item, i) => {
-              const checked = checkedItems.has(i)
-              return (
-                <button
-                  key={i}
-                  onClick={() => toggleCheck(i)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 12,
-                    padding: "12px 14px", borderRadius: 10,
-                    border: `1px solid ${checked ? "rgba(13,122,78,0.2)" : "rgba(0,0,0,0.07)"}`,
-                    background: checked ? "rgba(13,122,78,0.05)" : "#faf8f4",
-                    cursor: "pointer", textAlign: "left",
-                    transition: "all 0.15s ease",
-                    width: "100%",
-                  }}
-                >
-                  <div style={{
-                    width: 20, height: 20, borderRadius: 6, flexShrink: 0,
-                    border: `2px solid ${checked ? "#0d7a4e" : "rgba(0,0,0,0.2)"}`,
-                    background: checked ? "#0d7a4e" : "transparent",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 11, color: "#fff",
-                    transition: "all 0.15s ease",
-                  }}>
-                    {checked && "✓"}
-                  </div>
-                  <span style={{
-                    fontSize: 13, color: checked ? "#6b6456" : "#0f0e0c",
-                    textDecoration: checked ? "line-through" : "none",
-                    opacity: checked ? 0.6 : 1,
-                    transition: "all 0.15s ease",
-                  }}>
-                    {item}
-                  </span>
-                </button>
-              )
-            })}
+          <div className="relative h-1.5 bg-white/10 rounded-full overflow-hidden mb-4">
+            <motion.div className="absolute inset-y-0 left-0 bg-gradient-to-r from-green-500 to-emerald-400"
+              animate={{ width: `${progressPercent}%` }} transition={{ duration: 0.5 }} />
           </div>
-        </div>
+          <div className="space-y-2">
+            {plan.checklist?.map((item, i) => (
+              <motion.button key={i} onClick={() => toggleCheck(i)} whileHover={{ x: 4 }}
+                className="w-full flex items-center gap-3 p-3 rounded-xl bg-white/3 hover:bg-white/8 transition-colors text-left border border-white/5 hover:border-white/15">
+                {checkedItems[i] ? <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0" /> : <Circle className="w-4 h-4 text-gray-500 flex-shrink-0" />}
+                <span className={`text-sm ${checkedItems[i] ? "line-through text-gray-500" : "text-gray-200"}`}>{item}</span>
+              </motion.button>
+            ))}
+          </div>
+        </motion.div>
 
-        {/* Footer CTA */}
-        <div style={{
-          textAlign: "center",
-          opacity: mounted ? 1 : 0,
-          transition: "all 0.5s 0.6s ease",
-        }}>
-          <button
-            onClick={onReset}
-            style={{
-              background: "#0f0e0c", color: "#fff",
-              border: "none", borderRadius: 14,
-              padding: "14px 36px", fontSize: 15,
-              fontWeight: 700, cursor: "pointer",
-              fontFamily: "'Cabinet Grotesk', sans-serif",
-              letterSpacing: "-0.3px",
-              boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
-            }}
-          >
+        {/* CTA */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.9 }}
+          className="flex justify-center pb-8">
+          <button onClick={onReset}
+            className="px-8 py-4 bg-white/8 hover:bg-white/15 border border-white/15 hover:border-white/30 rounded-2xl text-white font-semibold transition-all text-sm">
             Plan Another Migration →
           </button>
-        </div>
+        </motion.div>
       </div>
     </div>
   )

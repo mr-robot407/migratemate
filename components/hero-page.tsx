@@ -332,7 +332,7 @@ export default function HeroPage({ onStart }: HeroPageProps) {
       {showTransition && (
         <motion.div
           initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "linear-gradient(135deg, #faf8f4, #f0ebe0)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 32 }}
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "linear-gradient(160deg, #f0ebe0 0%, #e8e4f0 30%, #d8e4f8 60%, #a8c0e0 100%)",display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 32 }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 40 }}>
             <div style={{ textAlign: "center" }}>
